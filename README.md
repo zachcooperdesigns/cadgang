@@ -23,13 +23,16 @@ No build step; the page is plain ES modules. `CADGANG_PORT` picks the port, `CAD
 
 ## Tools
 
-- **Bodies** panel: one row per STEP body or DXF layer. Tick to hide, click a name to solo, shift-click for all. **Explode** slides bodies apart. **Color** gives each a hue.
+- **Bodies** tree: bodies sit in folders by the part or assembly they came from (a STEP's products, a glTF's nodes), and a crowded folder gathers like-named bodies (every copy of one capacitor) into a folder of their own. ▸ opens a folder; its tick and ◐ hide or ghost everything in it. Drag the panel's right edge to resize; the width is remembered.
+- **Select** a body by clicking it in the view or the tree, or a whole part by clicking its folder (shift adds). **U** widens the selection to the part around it, then the assembly. **H** hides, **T** makes see-through, **S** shows only the selection, **⇧H** shows everything again, Esc deselects. Clicks pass through see-through bodies, so ghost the case and pick what is inside.
+- **Material and colour**: the selection menu has a material list (plastics, rubber, aluminium, steel, chrome, brass, copper, gold, glass, solder mask) and a colour picker. Choices are saved per file in this browser and undo with ⌘Z; *As file* goes back to what the file says.
 - **Section**: Off/X/Y/Z, drag the cut face or the slider, **Invert** the kept side. Cuts are capped, so hollow walls read as rings.
 - **Measure** snaps to endpoints, midpoints, centres and quadrants, defaults to axis-aligned distances (shift: free), reads a circle's ⌀ or an edge's length in one click, reads a cylinder's ⌀, a fillet's R or a sphere's SR from one click on the face, and measures face to face (parallel planes give the gap, anything else the closest approach). Dimensions stay on the page until clicked away or undone.
 - **Markup**: pen, arrow, note, erase. Anchored on the model, saved per file, and what `cadgang_screen` shows Claude.
 - Looks (shaded, metal, plastic, glass, x-ray, normals), ortho, edges, wire, grid, dark theme. These persist across sessions.
 - **Undo/redo** (⌘Z / ⇧⌘Z) covers every view change, dimension and stroke. **Right-click** opens the command menu; every button shows its hotkey on hover.
-- Rotation has no limits. Scroll rotates, shift-scroll pans, pinch zooms, double-click re-centres.
+- Mouse works like SolidWorks: wheel zooms about the pointer, middle-drag rotates, ctrl+middle pans, shift+middle zooms (left-drag rotates and right-drag pans too). On a trackpad, scroll rotates, shift-scroll pans, pinch zooms. Rotation has no limits; double-click re-centres.
+- **As file** (the first look) shows the file's own colours and materials, and a file that has them always opens in it: STEP styles (also the per-solid ones the importer misses), glTF/3MF/FBX materials, STL/PLY vertex colours. Material names finish the guess: steel is metal, satin less glossy, a lens or glass clear, rubber matte. The other looks override it.
 - **DXF** drawings are paper: drag and scroll pan, two-finger spin turns in 90° steps (`[` `]` on a keyboard), **Flip** (B) turns the sheet over. Lines, polylines with bulges, circles, arcs, ellipses, splines and block inserts are drawn; text, dimensions and hatches are skipped and counted.
 - `?open=/abs/a.step|/abs/b.stl`, `?section=z:0.3`, `?explode=0.4` set the viewer from a URL.
 
@@ -39,6 +42,7 @@ No build step; the page is plain ES modules. `CADGANG_PORT` picks the port, `CAD
 | E W G O C | Edges, Wire, Grid, Ortho, Color | I / Esc | Invert section / cancel pick, section off |
 | L | Next look | 1–7 | Front, back, top, bottom, right, left, iso |
 | M | Measure | P A N R ⌫ | Pen, Arrow, Note, Erase, Clear markup |
+| H T S U | Hide, see-through, show only, select the part around | ⇧H | Show all bodies |
 | B | Flip drawing over | [ ] | Turn 90° |
 | D | Dark / light | ⌘O ⌘Z ⇧⌘Z | Open, Undo, Redo |
 

@@ -35,8 +35,8 @@
       <button id="gridBtn" class="ghost on" title="Grid (G)">Grid</button>
       <button id="colorBtn" class="ghost" title="A colour per body or layer">Color</button>
       <button id="orthoBtn" class="ghost" title="Orthographic (O)">Ortho</button>
-      <select id="look" class="ghost" title="Render preset">
-        <option value="shaded">Shaded</option><option value="metal">Metal</option><option value="plastic">Plastic</option>
+      <select id="look" class="ghost" title="Render preset — As file shows the file's own colours and materials (grey when it has none)">
+        <option value="shaded">As file</option><option value="metal">Metal</option><option value="plastic">Plastic</option>
         <option value="glass">Glass</option><option value="xray">X-ray</option><option value="normals">Normals</option>
       </select>
       <span class="sep"></span>
@@ -59,7 +59,8 @@
 
   <main>
     <div id="viewport">
-      <div id="bodies" class="bodies" hidden title="Bodies: tick to show, click a name to see only it, shift-click for all"></div>
+      <div id="bodies" class="bodies" hidden title="Bodies: tick to show, click a name to select, ▸ to open a part"></div>
+      <div id="bodiesGrip" class="bodies-grip" hidden title="Drag to resize"></div>
       <div id="measureLayer" class="measure-layer"></div>
       <div id="markupLayer" class="measure-layer"></div>
       <div id="markupTools" class="markup-tools" title="Markup: anchored on the model; Claude sees it through cadgang_screen">
@@ -72,7 +73,7 @@
       <div id="drop" class="drop">
         <div id="loadError" class="load-error"></div>
         <div>Drop a STEP, IGES, BREP, STL, OBJ, PLY, 3MF, glTF, FBX or DXF file here.</div>
-        <div class="drop-hint">Scroll: rotate · Shift-scroll: pan · Pinch: zoom · Double-click: centre · Right-click: menu and hotkeys · ⌘Z undo · DXF: pan, spin to turn, B to flip over</div>
+        <div class="drop-hint">Wheel: zoom · Middle-drag: rotate · Ctrl+middle: pan · Trackpad scroll: rotate · Pinch: zoom · Click a body: hide / see-through · Double-click: centre · Right-click: menu and hotkeys · ⌘Z undo · DXF: pan, spin to turn, B to flip over</div>
       </div>
     </div>
   </main>

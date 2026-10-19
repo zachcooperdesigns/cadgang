@@ -48,8 +48,10 @@ async function localFile(req) {
 
 /**
  * Pack a tessellation as
- *   [u32 nPos, nIdx, nFaces, nBodies, nNameBytes][f32 pos][u32 idx][u32 face first,count…][u32 body first,count…][utf8 JSON names]
+ *   [u32 nPos, nIdx, nFaces, nBodies, nMetaBytes][f32 pos][u32 idx][u32 face first,count…][u32 body first,count…][utf8 JSON meta]
  * Bodies are triangle ranges, one per imported solid, so the viewer can show, hide and explode them one by one.
+ * meta is { bodies: [{name, path, color, opacity, material}], faceColors: [[face, r, g, b]…] }: the file's
+ * appearance, and each body's assembly path (part names from the top) for the tree.
  */
 export function pack(m) {
   const pos = Float32Array.from(m.positions), idx = Uint32Array.from(m.indices);
@@ -58,9 +60,12 @@ export function pack(m) {
   const bodyList = m.bodies?.length ? m.bodies : [{ first: 0, count: idx.length / 3, name: m.name || 'body' }];
   const bodies = new Uint32Array(bodyList.length * 2);
   bodyList.forEach((b, i) => { bodies[2 * i] = b.first; bodies[2 * i + 1] = b.count; });
-  const names = Buffer.from(JSON.stringify(bodyList.map((b) => b.name)), 'utf8');
-  const head = Uint32Array.of(pos.length, idx.length, m.faces.length, bodyList.length, names.length);
-  return Buffer.concat([...[head, pos, idx, faces, bodies].map((a) => Buffer.from(a.buffer, a.byteOffset, a.byteLength)), names]);
+  const meta = Buffer.from(JSON.stringify({
+    bodies: bodyList.map((b) => ({ name: b.name, path: b.path ?? [], color: b.color ?? null, opacity: b.opacity ?? 1, material: b.material ?? '' })),
+    faceColors: m.faces.flatMap((f, i) => (f.color ? [[i, ...f.color]] : [])),
+  }), 'utf8');
+  const head = Uint32Array.of(pos.length, idx.length, m.faces.length, bodyList.length, meta.length);
+  return Buffer.concat([...[head, pos, idx, faces, bodies].map((a) => Buffer.from(a.buffer, a.byteOffset, a.byteLength)), meta]);
 }
 
 /**

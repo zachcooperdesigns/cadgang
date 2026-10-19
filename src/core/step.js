@@ -10,6 +10,7 @@
 import { Worker } from 'node:worker_threads';
 import { fileURLToPath } from 'node:url';
 import { weldVertices, positionsBBox } from './mesh.js';
+import { stepSolidStyles } from './stepstyle.js';
 
 /**
  * importCadFile in its own worker thread: the server stays responsive, and
@@ -52,8 +53,8 @@ function readerFor(occt, name = '') {
  * buffer: Buffer|Uint8Array of the CAD file.
  * Options: name (filename, picks the reader by extension), linearDeflection
  * (bounding-box ratio, smaller = finer), angularDeflection (radians).
- * Returns { name, positions, indices, faces:[{first,count}], bbox,
- *           vertexCount, triangleCount, faceCount } with plain JSON arrays.
+ * Returns { name, positions, indices, faces:[{first,count,color?}], bodies:[{first,count,name,path,color,opacity,material}],
+ *           bbox, vertexCount, triangleCount, faceCount } with plain JSON arrays. Colours are [r,g,b] in 0..1.
  */
 export async function importCadFile(buffer, { name = 'import.step', linearDeflection = 0.001, angularDeflection = 0.5 } = {}) {
   const occt = await getOcct();
@@ -72,6 +73,20 @@ export async function importCadFile(buffer, { name = 'import.step', linearDeflec
     throw new Error(`Could not read '${name}' — not a valid STEP/IGES/BREP file?`);
   }
 
+  // Appearance: OCCT's own colours where it found them, else the file's styles
+  // read by hand: mesh k of a part is that part's solid k when the counts agree,
+  // else solid i of the file is mesh i when those agree. Names likewise: the
+  // solid's, else the part (product) it sits in.
+  const styles = /\.(step|stp)$/i.test(name) ? stepSolidStyles(Buffer.from(buffer.buffer ?? buffer, buffer.byteOffset ?? 0, buffer.byteLength).toString('latin1')) : { solids: [], parts: new Map() };
+  const fromText = styles.solids.length === result.meshes.length ? [...styles.solids] : [];
+  const partOf = [], pathOf = [];   // the part a mesh sits in, and the assembly path down to it
+  (function walk(node, trail) {
+    const here = node?.name ? [...trail, node.name] : trail;
+    const own = styles.parts.get(node?.name);
+    (node?.meshes ?? []).forEach((i, k) => { partOf[i] = node.name; pathOf[i] = here; if (own?.length === node.meshes.length) fromText[i] = own[k]; });
+    for (const c of node?.children ?? []) walk(c, here);
+  })(result.root, []);
+
   // Merge sub-meshes, re-offsetting vertex indices and face triangle ranges.
   let vTotal = 0, iTotal = 0;
   for (const m of result.meshes) {
@@ -83,19 +98,25 @@ export async function importCadFile(buffer, { name = 'import.step', linearDeflec
   const faces = [];
   const bodies = []; // one per imported solid: {first, count, name} in triangles
   let vOff = 0, iOff = 0;
-  for (const m of result.meshes) {
+  for (const [mi, m] of result.meshes.entries()) {
     positions.set(m.attributes.position.array, vOff * 3);
     const idx = m.index.array;
     for (let i = 0; i < idx.length; i++) indices[iOff + i] = idx[i] + vOff;
     const triOff = iOff / 3, triCount = idx.length / 3;
     // OCCT's writer names unnamed solids after itself ("Open CASCADE STEP translator 7.6 1.2"); say "body 2".
-    const raw = String(m.name || '').trim();
-    bodies.push({ first: triOff, count: triCount, name: raw && !/^Open CASCADE/i.test(raw) ? raw : `body ${bodies.length + 1}` });
+    const named = (n) => { n = String(n || '').trim(); return n && !/^Open CASCADE/i.test(n) ? n : ''; };
+    const style = fromText[mi] ?? { color: null, opacity: 1, material: '' };
+    bodies.push({
+      first: triOff, count: triCount,
+      name: named(m.name) || named(style.name) || named(partOf[mi]) || `body ${bodies.length + 1}`,
+      path: pathOf[mi] ?? [],
+      color: m.color ?? style.color, opacity: style.opacity, material: style.material,
+    });
     const brep = Array.isArray(m.brep_faces) && m.brep_faces.length ? m.brep_faces : null;
     if (brep) {
       for (const f of brep) {
         const count = f.last - f.first + 1;
-        if (count > 0) faces.push({ first: triOff + f.first, count });
+        if (count > 0) faces.push(f.color ? { first: triOff + f.first, count, color: f.color } : { first: triOff + f.first, count });
       }
     } else {
       faces.push({ first: triOff, count: triCount });
