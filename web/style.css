@@ -405,3 +405,14 @@ header #explode { width: 100px; }
 /* the view cube centred in the space over the section bar left of its buttons (scale reference, Fit), which sit at the right */
 .hud-br > .viewcube { align-self: stretch; }
 .hud-br > .viewcube > canvas { margin: 0 auto; }
+/* New joint: the step card at the top of the view, the tag at the pointer, and the motion under each joint type */
+.joint-guide { position: absolute; top: calc(var(--sp-3) + 40px); left: 50%; transform: translateX(-50%); z-index: 6; width: min(460px, calc(100% - 32px)); background: var(--paper); border: 2px solid var(--ink); padding: var(--sp-2) var(--sp-3); font-size: var(--fs-12); box-shadow: 0 4px 16px rgba(0,0,0,.15); }
+.joint-guide[hidden] { display: none; }
+.joint-guide .jg-step { color: var(--ink-faint); font-size: 10px; letter-spacing: var(--ls-label); text-transform: uppercase; }
+.joint-guide .jg-title { font-weight: 700; font-size: 14px; margin: 2px 0 4px; }
+.joint-guide .jg-body { color: var(--ink-soft); line-height: 1.4; }
+.joint-guide .jg-cancel { margin-top: var(--sp-2); font-size: var(--fs-12); padding: 3px 8px; }
+.joint-tag { position: fixed; z-index: 30; pointer-events: none; background: var(--ink); color: var(--paper); font-size: var(--fs-12); padding: 3px 7px; white-space: nowrap; }
+.joint-tag[hidden] { display: none; }
+#ctx button .hint { display: block; color: var(--ink-faint); font-size: 10px; margin-top: 1px; white-space: normal; }
+#ctx button.on .hint { color: var(--ink-soft); }

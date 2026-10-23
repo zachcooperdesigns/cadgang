@@ -1545,6 +1545,12 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   if (pickJoint) {
     const { h, a } = jointFaceAt(e) ?? {};
     axisArrow.visible = !!a;
+    hoverBody(h && h.body !== pickJoint.first?.m ? h.body : null);   // the part a click would take lights up
+    jointTag.hidden = false;
+    jointTag.style.left = `${e.clientX + 16}px`; jointTag.style.top = `${e.clientY + 16}px`;
+    jointTag.textContent = !h ? (pickJoint.first ? 'empty space: fix it to the ground' : 'no part here')
+      : h.body === pickJoint.first?.m ? `${nameOf(h.body)}: that's the moving part, pick another`
+      : `${nameOf(h.body)} · ${FACE_MEANS[a.kind] ?? 'this face'}`;
     if (a) {   // the axis it would take, drawn where the face's own frame puts it
       const len = 0.35 * (h.body.geometry.boundingBox?.getSize(new THREE.Vector3()).length() || 10);
       axisArrow.position.copy(a.origin).applyMatrix4(h.body.matrixWorld);
@@ -1772,6 +1778,23 @@ function addJoint(m, type, a, parent = null, align = null) {
 // shank, a bore, a pin, a ball), else along the first face's normal; the menu offers the type the faces
 // suggest first. The arrow shows what a click would take. The parts stay where they are (Fusion's as-built joint).
 let pickJoint = null;   // { first: { m, a } } once the moving part's face is in
+// While a joint is being made, a card at the top of the view says which step this is and what to click,
+// and a tag at the pointer names the part and the face a click would take (and what that face means).
+const jointGuide = Object.assign(document.createElement('div'), { className: 'joint-guide', hidden: true });
+const jointTag = Object.assign(document.createElement('div'), { className: 'joint-tag', hidden: true });
+document.body.append(jointTag);
+function guideJoint(step, title, body) {
+  if (!jointGuide.isConnected) viewport.append(jointGuide);
+  jointGuide.hidden = false;
+  jointGuide.replaceChildren(
+    Object.assign(document.createElement('div'), { className: 'jg-step', textContent: `New joint · step ${step} of 3` }),
+    Object.assign(document.createElement('div'), { className: 'jg-title', textContent: title }),
+    Object.assign(document.createElement('div'), { className: 'jg-body', textContent: body }),
+    Object.assign(document.createElement('button'), { className: 'ghost jg-cancel', textContent: 'Cancel (Esc)', onclick: () => { endPickJoint(); say('new joint cancelled'); } }),
+  );
+}
+renderer.domElement.addEventListener('pointerleave', () => { jointTag.hidden = true; });
+const FACE_MEANS = { cyl: 'round face: it turns or slides about this axis', sphere: 'ball: it swivels about this centre', plane: 'flat face: it sits on and slides along this face' };
 function startPickJoint() {   // in either mode: an exploded assembly stays exploded, its faces easier to reach
   hideMenu();
   setMeasure(false);   // the face picks are the joint's: no measure or markup tool in the way
@@ -1779,9 +1802,10 @@ function startPickJoint() {   // in either mode: an exploded assembly stays expl
   pickJoint = {};
   renderer.domElement.classList.add('picking');
   $('#newJointBtn').classList.add('on');
+  guideJoint(1, 'Click a face on the part that MOVES', 'The lid, the door, the screw: whatever turns or slides. Pick a round face (a hole, a pin, a shaft) for it to turn or slide about, or a flat face for it to sit on. The arrow shows the axis a click takes.');
   say('new joint: click a face on the part that moves · Esc cancels');
 }
-function endPickJoint() { pickJoint = null; axisArrow.visible = false; renderer.domElement.classList.remove('picking'); $('#newJointBtn').classList.remove('on'); }
+function endPickJoint() { pickJoint = null; axisArrow.visible = false; renderer.domElement.classList.remove('picking'); $('#newJointBtn').classList.remove('on'); jointGuide.hidden = true; jointTag.hidden = true; hoverBody(null); }
 // The face under the pointer and the axis it gives, its origin moved onto the snap near the pointer, as
 // Fusion's joint origins: a circle's centre (its axis is the circle's: a hole picked by its rim), an edge's
 // end or middle. A round face keeps its axis and slides along it to the snap; a ball keeps its centre.
@@ -1804,6 +1828,7 @@ function pickJointFace(e) {
     if (!h) return say('click a face on the part that moves · Esc cancels');
     pickJoint.first = { m: h.body, a: picked };
     selectBodies([h.body], 'set');
+    guideJoint(2, `Now click a face on the part ${nameOf(h.body)} moves ON`, `The part that holds it: the case a lid hinges on, the bore a pin turns in. ${nameOf(h.body)} snaps onto that face. Click empty space instead to fix it to the ground. ${nameOf(h.body)} is shown selected.`);
     return say(`${nameOf(h.body)} moves: click a face on the part it moves on, or empty space for the ground · Esc cancels`);
   }
   if (h?.body === pickJoint.first.m) return say('click a face on another part, or empty space for the ground');
@@ -1815,9 +1840,11 @@ function pickJointFace(e) {
   const suggest = a.kind === 'sphere' ? 'ball' : a.kind === 'cyl' ? 'revolute' : flatOnFlat || !parent ? 'planar' : 'slider';
   endPickJoint();
   const types = [suggest, ...['revolute', 'slider', 'screw', 'cylindrical', 'planar', 'ball', 'fixed'].filter((t) => t !== suggest)];
+  const MOTION = { revolute: 'turns about the axis, like a hinge or a knob', slider: 'slides along the axis, like a drawer', screw: 'turns and moves along, like a screw', cylindrical: 'turns and slides, like a pin in a hole', planar: 'slides about on the face and turns on it', ball: 'swivels any way, like a ball joint', fixed: 'locked in place, no motion' };
+  say(`step 3 of 3: choose how ${nameOf(m)} moves`);
   showItems(e.clientX, e.clientY, [
-    { head: `${nameOf(m)} on ${parent ? nameOf(parent) : 'the ground'}` },
-    ...types.map((t) => ({ label: t === 'fixed' ? 'Rigid' : JOINT_LABEL[t], on: () => t === suggest, run: () => addJoint(m, t, a, parent, align) })),   // a rigid joint keeps the face too: its offset goes along it
+    { head: `Step 3 of 3 · how does ${nameOf(m)} move on ${parent ? nameOf(parent) : 'the ground'}?` },
+    ...types.map((t) => ({ label: t === 'fixed' ? 'Rigid' : JOINT_LABEL[t], hint: (t === suggest ? 'suggested: ' : '') + MOTION[t], on: () => t === suggest, run: () => addJoint(m, t, a, parent, align) })),   // a rigid joint keeps the face too: its offset goes along it
   ]);
 }
 // Where the moving part goes, as Fusion snaps it: its face's centre onto the other's, a flat face turned to
@@ -3479,7 +3506,9 @@ function showItems(x, y, items) {
     b.className = 'ghost' + (c.on?.() ? ' on' : '');
     const kbd = Object.assign(document.createElement('kbd'), { textContent: c.key ? keyLabel(c) : '' });
     if (DEFAULT_KEYS.has(c.label) && CMDS.includes(c)) { kbd.classList.add('remap'); kbd.title = 'Click, then press a new key (⌫ none, Esc keep)'; }
-    b.append(Object.assign(document.createElement('span'), { textContent: c.label }), kbd);
+    const lab = Object.assign(document.createElement('span'), { textContent: c.label });
+    if (c.hint) lab.append(Object.assign(document.createElement('small'), { className: 'hint', textContent: c.hint }));   // a line saying what it does
+    b.append(lab, kbd);
     b.addEventListener('click', (e) => {
       if (e.target === kbd && kbd.classList.contains('remap')) { remapping = { c, kbd }; kbd.textContent = 'press a key'; kbd.classList.add('on'); return; }
       hideMenu(); c.run();
