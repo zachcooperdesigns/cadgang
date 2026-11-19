@@ -384,6 +384,33 @@ server.registerTool(
 );
 
 server.registerTool(
+  'cadgang_view',
+  {
+    title: 'Take a picture of the model in a set view',
+    description: `Set up the window showing the file, take one picture and put the window back exactly as it was: the camera, look, explode, section and what is shown. For product pictures, tech packs and documentation. 'view' is front, back, top, bottom, right, left, iso or iso-rear (or {yaw, pitch} in radians); 'ortho' is true by default; 'explode' 0 to 100 uses the window's solved explode; 'look' is shaded, metal, plastic, glass, materials or xray; 'section' x, y or z with 'sectionPos' the slider 0 to 100 (capped cut); 'only' or 'hide' name parts; 'zoom' above 1 fills more of the frame; 'render' uses the Mac app's ray tracer and waits for a converged picture (up to a minute). The picture is on white. 'bodies' gives where each part shown landed in the picture, in its pixels, for balloons and labels. Pass 'save' to write the PNG to that absolute path as well.`,
+    inputSchema: {
+      view: z.union([z.enum(['front', 'back', 'top', 'bottom', 'right', 'left', 'iso', 'iso-rear']), z.object({ yaw: z.number(), pitch: z.number() })]).optional(),
+      ortho: z.boolean().optional(), explode: z.number().min(0).max(100).optional(),
+      look: z.enum(['shaded', 'metal', 'plastic', 'glass', 'materials', 'xray']).optional(), edges: z.boolean().optional(),
+      section: z.enum(['x', 'y', 'z']).optional(), sectionPos: z.number().min(0).max(100).optional(),
+      only: z.array(z.string()).optional(), hide: z.array(z.string()).optional(), zoom: z.number().positive().optional(),
+      render: z.boolean().optional(), save: z.string().optional().describe('absolute path to write the PNG to'),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async ({ save, ...a }) => {
+    try {
+      const { subject } = await call('/view/joints');
+      const r = await call(`/view/ask?wait=${a.render ? 120 : 30}`, { method: 'POST', body: { what: 'view', subject, args: a } });
+      const data = String(r.png || '').replace(/^data:image\/png;base64,/, '');
+      if (save) fs.writeFileSync(save, Buffer.from(data, 'base64'));
+      const { png: _png, ...rest } = r;
+      return { content: [{ type: 'text', text: JSON.stringify({ ...rest, saved: save || undefined }, null, 2) }, { type: 'image', data, mimeType: 'image/png' }], structuredContent: { ...rest, saved: save || undefined } };
+    } catch (e) { return fail(e); }
+  }
+);
+
+server.registerTool(
   'cadgang_rename',
   {
     title: 'Rename bodies',

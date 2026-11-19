@@ -2980,13 +2980,79 @@ function showDraft({ op, kind }) {
   }).catch(() => {}).finally(() => { draftRun = null; });
 }
 // Claude asks what only the page knows (cadgang_interference): the reply goes back through the server.
-function answer({ id, what, args }) {
+async function answer({ id, what, args }) {
   let body;
   try {
-    if (what !== 'sweep') throw new Error(`Unknown question: ${what}`);
-    body = { id, result: { subject, joints: sweep(args) } };
+    if (what === 'sweep') body = { id, result: { subject, joints: sweep(args) } };
+    else if (what === 'view') body = { id, result: { subject, ...(await viewShot(args)) } };
+    else throw new Error(`Unknown question: ${what}`);
   } catch (e) { body = { id, error: e.message }; }
   fetch('api/view/answer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => {});
+}
+
+// VIEW (asked over /api/view/ask, what: 'view'): another program sets up a shot, takes it and gets the window back as
+// it was. args: view ('front', 'back', 'top', 'bottom', 'right', 'left', 'iso', 'iso-rear', or {yaw, pitch}), ortho
+// (default true), explode (0 to 100), look (shaded, metal, plastic, glass, materials, xray), edges, section ('x', 'y',
+// 'z') and sectionPos (the slider, 0 to 100), only or hide (part names), zoom (1 fits the parts), render (the Mac app's
+// ray tracer, converged). Returns the picture on white, its size, and where each part shown landed in it (for balloons).
+const VIEW_DIRS = { front: [0, 0], back: [Math.PI, 0], top: [0, Math.PI / 2 - 1e-4], bottom: [0, -Math.PI / 2 + 1e-4], right: [Math.PI / 2, 0], left: [-Math.PI / 2, 0], iso: [-0.6, 0.5], 'iso-rear': [Math.PI - 0.6, 0.5] };
+const nextFrame = () => new Promise((done) => requestAnimationFrame(() => done()));
+function nativeShot() {
+  return new Promise((done, fail) => {
+    const before = window.cadgangRenderShot;
+    const t = setTimeout(() => { window.cadgangRenderShot = before; shooting = false; progressEnd(); fail(new Error('the render took too long')); }, 110_000);
+    window.cadgangRenderShot = (b64, w, h) => {
+      clearTimeout(t); window.cadgangRenderShot = before; shooting = false; progressEnd();
+      b64 ? done(`data:image/png;base64,${b64}`) : fail(new Error('the render is not up yet'));
+    };
+    shooting = true; window.cadgangRenderShotProgress(0, 1);
+    window.webkit.messageHandlers.cadgang.postMessage({ cmd: 'renderShot' });
+  });
+}
+async function viewShot(a = {}) {
+  if (!bbox || !model.children.length) throw new Error('No model is open in this window.');
+  const keep = { yaw: orbit.yaw, pitch: orbit.pitch, dist: orbit.dist, target: orbit.target.clone(), ortho: ui.ortho, explode: $('#explode').value, look: ui.look, edges: ui.edges, grid: ui.grid, axis: $('#sectAxis').dataset.axis || '', pos: $('#sectPos').value, vis: model.children.map((m) => m.visible), bg: scene.background, sky: sky.visible, render: rt.on, marks: markup.group.visible };
+  const want = (m, list) => list.some((n) => [m.userData.name, nameOf(m)].some((x) => x && String(x).toLowerCase() === String(n).toLowerCase()));
+  try {
+    if (a.only?.length) for (const m of model.children) setBodyVisible(m, want(m, a.only));
+    else if (a.hide?.length) for (const m of model.children) setBodyVisible(m, !want(m, a.hide));
+    if (a.look && a.look !== ui.look) { $('#look').value = a.look; $('#look').dispatchEvent(new Event('change')); }
+    if (typeof a.edges === 'boolean' && a.edges !== ui.edges) toggle('edges', '#edgesBtn');
+    if (ui.grid) toggle('grid', '#gridBtn');
+    if (a.explode != null) { solveDue?.(); $('#explode').value = String(Math.max(0, Math.min(100, Number(a.explode)))); applyExplode(); }
+    setSectionAxis(a.section || '');
+    if (a.section && a.sectionPos != null) { $('#sectPos').value = String(a.sectionPos); updateSection(); }
+    setOrtho(a.ortho ?? true);
+    const d = typeof a.view === 'string' ? VIEW_DIRS[a.view] : a.view && [Number(a.view.yaw), Number(a.view.pitch)];
+    if (a.view && !d) throw new Error(`Unknown view: ${a.view}`);
+    if (d) { viewTween = null; orbit.yaw = d[0]; orbit.pitch = d[1]; }
+    fit();
+    if (a.zoom) orbit.dist /= Number(a.zoom);
+    scene.background = new THREE.Color(0xffffff); sky.visible = false; markup.group.visible = false;
+    if (a.render && NATIVE) await setRender(true);
+    await nextFrame(); await nextFrame();
+    let png;
+    if (a.render && NATIVE) png = await nativeShot();
+    else { frame(); renderer.render(scene, camera); png = renderer.domElement.toDataURL('image/png'); }
+    const w = renderer.domElement.width, h = renderer.domElement.height;
+    const bodies = model.children.filter((m) => m.visible && !m.isLine).map((m) => {
+      const c = new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3()).project(camera);
+      return { name: nameOf(m), file: m.userData.name, x: Math.round(((c.x + 1) / 2) * w), y: Math.round(((1 - c.y) / 2) * h) };
+    });
+    return { png, width: w, height: h, bodies };
+  } finally {
+    if (rt.on !== keep.render) await setRender(keep.render);
+    model.children.forEach((m, i) => setBodyVisible(m, keep.vis[i]));
+    if (ui.look !== keep.look) { $('#look').value = keep.look; $('#look').dispatchEvent(new Event('change')); }
+    if (ui.edges !== keep.edges) toggle('edges', '#edgesBtn');
+    if (ui.grid !== keep.grid) toggle('grid', '#gridBtn');
+    $('#explode').value = keep.explode; applyExplode();
+    setSectionAxis(keep.axis); if (keep.axis) { $('#sectPos').value = keep.pos; updateSection(); }
+    setOrtho(keep.ortho);
+    Object.assign(orbit, { yaw: keep.yaw, pitch: keep.pitch, dist: keep.dist }); orbit.target.copy(keep.target);
+    scene.background = keep.bg; sky.visible = keep.sky; markup.group.visible = keep.marks;
+    syncRows(); frame();
+  }
 }
 /** Every joint (or `joint`, an id) through its range: what its parts run into. Labels in, so Claude names parts as the user sees them. */
 function sweep({ joint = null, steps = 36, gap = 0, tol = checkTol(), free = false } = {}) {   // free: the whole range, past the limits
