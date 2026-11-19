@@ -2980,13 +2980,125 @@ function showDraft({ op, kind }) {
   }).catch(() => {}).finally(() => { draftRun = null; });
 }
 // Claude asks what only the page knows (cadgang_interference): the reply goes back through the server.
-function answer({ id, what, args }) {
+async function answer({ id, what, args }) {
   let body;
   try {
-    if (what !== 'sweep') throw new Error(`Unknown question: ${what}`);
-    body = { id, result: { subject, joints: sweep(args) } };
+    if (what === 'sweep') body = { id, result: { subject, joints: sweep(args) } };
+    else if (what === 'view') body = { id, result: { subject, ...(await viewShot(args)) } };
+    else throw new Error(`Unknown question: ${what}`);
   } catch (e) { body = { id, error: e.message }; }
   fetch('api/view/answer', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => {});
+}
+
+// VIEW (asked over /api/view/ask, what: 'view'): another program sets up a shot, takes it and gets the window back as
+// it was. args: view ('front', 'back', 'top', 'bottom', 'right', 'left', 'iso', 'iso-rear', or {yaw, pitch}), ortho
+// (default true), explode (0 to 100), look (shaded, metal, plastic, glass, materials, xray), edges, section ('x', 'y',
+// 'z') and sectionPos (the slider, 0 to 100), group (explode by STEP sub-assembly: a depth, or 'auto'), only or hide
+// (part names), zoom (1 fits the parts), render (the Mac app's
+// ray tracer, converged). Returns the picture on white, its size, and where each part shown landed in it (for balloons).
+const VIEW_DIRS = { front: [0, 0], back: [Math.PI, 0], top: [0, Math.PI / 2 - 1e-4], bottom: [0, -Math.PI / 2 + 1e-4], right: [Math.PI / 2, 0], left: [-Math.PI / 2, 0], iso: [-0.6, 0.5], 'iso-rear': [Math.PI - 0.6, 0.5] };
+const nextFrame = () => new Promise((done) => requestAnimationFrame(() => done()));
+function nativeShot() {
+  return new Promise((done, fail) => {
+    const before = window.cadgangRenderShot;
+    const t = setTimeout(() => { window.cadgangRenderShot = before; shooting = false; progressEnd(); fail(new Error('the render took too long')); }, 110_000);
+    window.cadgangRenderShot = (b64, w, h) => {
+      clearTimeout(t); window.cadgangRenderShot = before; shooting = false; progressEnd();
+      b64 ? done(`data:image/png;base64,${b64}`) : fail(new Error('the render is not up yet'));
+    };
+    shooting = true; window.cadgangRenderShotProgress(0, 1);
+    window.webkit.messageHandlers.cadgang.postMessage({ cmd: 'renderShot' });
+  });
+}
+/**
+ * Explode by sub-assembly: every body in the same STEP assembly group, `depth` levels down, moves with that group's
+ * largest body, so a bought-in board travels with its hundreds of components instead of scattering them. 'auto' takes
+ * the shallowest depth that splits the model into a handful of groups. Only for the picture: applyExplode undoes it.
+ */
+function explodeByGroup(depth) {
+  const bodies = model.children.filter((m) => !m.isLine);
+  const keyAt = (m, d) => { const p = m.userData.path ?? []; return p.length > d ? p.slice(0, d + 1).join('\u0000') : `\u0001${m.uuid}`; };
+  let d = Number(depth);
+  if (depth === 'auto') {
+    const maxD = Math.max(0, ...bodies.map((m) => (m.userData.path ?? []).length - 1));
+    d = 0;
+    for (let k = 0; k <= maxD; k++) { const n = new Set(bodies.map((m) => keyAt(m, k))).size; d = k; if (n >= 4) break; }
+  }
+  const size = (m) => { const v = new THREE.Box3().setFromObject(m).getSize(new THREE.Vector3()); return v.x * v.y * v.z; };
+  const lead = new Map();
+  for (const m of bodies) { const k = keyAt(m, d), cur = lead.get(k); if (!cur || size(m) > size(cur)) lead.set(k, m); }
+  for (const m of bodies) {
+    const l = lead.get(keyAt(m, d));
+    if (!l || l === m) continue;
+    m.position.add(l.userData.exPos).sub(m.userData.exPos);
+    m.userData.edges?.position.copy(m.position);
+  }
+  measure.invalidate();
+}
+/** Zoom so the parts shown fill `fill` of the frame: fit() leaves room for any turn, a picture wants the parts large. */
+function tighten(fill) {
+  const b = new THREE.Box3();
+  for (const m of model.children) if (m.visible && !m.isLine) b.expandByObject(m);
+  if (b.isEmpty()) return;
+  for (let i = 0; i < 3; i++) {   // the frustum follows the distance, so settle it in a few passes
+    applyCamera(); camera.updateMatrixWorld(true);
+    let ext = 0;
+    for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) {
+      const p = new THREE.Vector3(x, y, z).project(camera);
+      ext = Math.max(ext, Math.abs(p.x), Math.abs(p.y));
+    }
+    if (!ext || !isFinite(ext)) return;
+    orbit.dist *= ext / fill;
+  }
+  applyCamera();
+}
+async function viewShot(a = {}) {
+  if (!bbox || !model.children.length) throw new Error('No model is open in this window.');
+  const keep = { yaw: orbit.yaw, pitch: orbit.pitch, dist: orbit.dist, target: orbit.target.clone(), ortho: ui.ortho, explode: $('#explode').value, look: ui.look, edges: ui.edges, grid: ui.grid, axis: $('#sectAxis').dataset.axis || '', pos: $('#sectPos').value, vis: model.children.map((m) => m.visible), bg: scene.background, sky: sky.visible, render: rt.on, marks: markup.group.visible };
+  const want = (m, list) => list.some((n) => [m.userData.name, nameOf(m)].some((x) => x && String(x).toLowerCase() === String(n).toLowerCase()));
+  try {
+    if (a.only?.length) for (const m of model.children) setBodyVisible(m, want(m, a.only));
+    else if (a.hide?.length) for (const m of model.children) setBodyVisible(m, !want(m, a.hide));
+    if (a.look && a.look !== ui.look) { $('#look').value = a.look; $('#look').dispatchEvent(new Event('change')); }
+    if (typeof a.edges === 'boolean' && a.edges !== ui.edges) toggle('edges', '#edgesBtn');
+    if (ui.grid) toggle('grid', '#gridBtn');
+    if (a.explode != null) { solveDue?.(); $('#explode').value = String(Math.max(0, Math.min(100, Number(a.explode)))); applyExplode(); }
+    if (a.group && Number($('#explode').value) > 0) explodeByGroup(a.group);
+    setSectionAxis(a.section || '');
+    if (a.section && a.sectionPos != null) { $('#sectPos').value = String(Math.round(Number(a.sectionPos) * 10)); updateSection(); }   // the slider runs 0 to 1000
+    setOrtho(a.ortho ?? true);
+    const d = typeof a.view === 'string' ? VIEW_DIRS[a.view] : a.view && [Number(a.view.yaw), Number(a.view.pitch)];
+    if (a.view && !d) throw new Error(`Unknown view: ${a.view}`);
+    if (d) { viewTween = null; orbit.yaw = d[0]; orbit.pitch = d[1]; }
+    model.updateMatrixWorld(true);   // the explode just moved parts: frame where they are now, not where they were drawn last
+    fit();
+    tighten(a.fill ?? 0.85);
+    if (a.zoom) orbit.dist /= Number(a.zoom);
+    scene.background = new THREE.Color(0xffffff); sky.visible = false; markup.group.visible = false;
+    if (a.render && NATIVE) await setRender(true);
+    await nextFrame(); await nextFrame();
+    let png;
+    if (a.render && NATIVE) png = await nativeShot();
+    else { frame(); renderer.render(scene, camera); png = renderer.domElement.toDataURL('image/png'); }
+    const w = renderer.domElement.width, h = renderer.domElement.height;
+    const bodies = model.children.filter((m) => m.visible && !m.isLine).map((m) => {
+      const c = new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3()).project(camera);
+      return { name: nameOf(m), file: m.userData.name, x: Math.round(((c.x + 1) / 2) * w), y: Math.round(((1 - c.y) / 2) * h) };
+    });
+    return { png, width: w, height: h, bodies };
+  } finally {
+    if (rt.on !== keep.render) await setRender(keep.render);
+    model.children.forEach((m, i) => setBodyVisible(m, keep.vis[i]));
+    if (ui.look !== keep.look) { $('#look').value = keep.look; $('#look').dispatchEvent(new Event('change')); }
+    if (ui.edges !== keep.edges) toggle('edges', '#edgesBtn');
+    if (ui.grid !== keep.grid) toggle('grid', '#gridBtn');
+    $('#explode').value = keep.explode; applyExplode();
+    setSectionAxis(keep.axis); if (keep.axis) { $('#sectPos').value = keep.pos; updateSection(); }
+    setOrtho(keep.ortho);
+    Object.assign(orbit, { yaw: keep.yaw, pitch: keep.pitch, dist: keep.dist }); orbit.target.copy(keep.target);
+    scene.background = keep.bg; sky.visible = keep.sky; markup.group.visible = keep.marks;
+    syncRows(); frame();
+  }
 }
 /** Every joint (or `joint`, an id) through its range: what its parts run into. Labels in, so Claude names parts as the user sees them. */
 function sweep({ joint = null, steps = 36, gap = 0, tol = checkTol(), free = false } = {}) {   // free: the whole range, past the limits
